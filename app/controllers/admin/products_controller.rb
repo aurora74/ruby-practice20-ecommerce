@@ -59,42 +59,60 @@ class Admin::ProductsController < Admin::BaseController
 
   # DELETE /admin/products/:id
   def destroy
-    if @product.destroy
-      flash[:success] = t(".success")
-    else
+    Product.transaction do
+      if @product.destroy
+        flash[:success] = t(".success")
+      else
+        flash[:danger] = t(".error")
+      end
+      redirect_to admin_products_path
+    rescue StandardError => e
+      Rails.logger.error "Product deletion failed: #{e.message}"
       flash[:danger] = t(".error")
+      redirect_to admin_products_path
     end
-    redirect_to admin_products_path
   end
 
   # PATCH /admin/products/:id/toggle_status
-  def toggle_status
-    if @product.update(is_active: !@product.is_active)
-      status_text = if @product.is_active?
-                      t("admin.status.active")
-                    else
-                      t("admin.status.inactive")
-                    end
-      flash[:success] = t(".success", status: status_text)
-    else
+  def toggle_status # rubocop:disable Metrics/AbcSize
+    Product.transaction do
+      if @product.update(is_active: !@product.is_active)
+        status_text = if @product.is_active?
+                        t("admin.status.active")
+                      else
+                        t("admin.status.inactive")
+                      end
+        flash[:success] = t(".success", status: status_text)
+      else
+        flash[:danger] = t(".error")
+      end
+      redirect_back(fallback_location: admin_products_path)
+    rescue StandardError => e
+      Rails.logger.error "Product toggle status failed: #{e.message}"
       flash[:danger] = t(".error")
+      redirect_back(fallback_location: admin_products_path)
     end
-    redirect_back(fallback_location: admin_products_path)
   end
 
   # PATCH /admin/products/:id/toggle_featured
-  def toggle_featured
-    if @product.update(is_featured: !@product.is_featured)
-      featured_text = if @product.is_featured?
-                        t("admin.featured.yes")
-                      else
-                        t("admin.featured.no")
-                      end
-      flash[:success] = t(".success", featured: featured_text)
-    else
+  def toggle_featured # rubocop:disable Metrics/AbcSize
+    Product.transaction do
+      if @product.update(is_featured: !@product.is_featured)
+        featured_text = if @product.is_featured?
+                          t("admin.featured.yes")
+                        else
+                          t("admin.featured.no")
+                        end
+        flash[:success] = t(".success", featured: featured_text)
+      else
+        flash[:danger] = t(".error")
+      end
+      redirect_back(fallback_location: admin_products_path)
+    rescue StandardError => e
+      Rails.logger.error "Product toggle featured failed: #{e.message}"
       flash[:danger] = t(".error")
+      redirect_back(fallback_location: admin_products_path)
     end
-    redirect_back(fallback_location: admin_products_path)
   end
 
   # PUT /admin/products/sort
@@ -143,7 +161,9 @@ class Admin::ProductsController < Admin::BaseController
     products = apply_category_filter(products)
     products = apply_brand_filter(products)
     products = apply_status_filter(products)
+    products = apply_stock_status_filter(products)
     products = apply_featured_filter(products)
+    products = apply_price_filter(products)
     products = apply_search_filter(products)
     apply_sort_filter(products)
   end
@@ -167,6 +187,13 @@ class Admin::ProductsController < Admin::BaseController
     case params[:status]
     when "active" then products.active
     when "inactive" then products.inactive
+    else products
+    end
+  end
+
+  def apply_stock_status_filter products
+    case params[:stock_status]
+    when "in_stock" then products.with_stock
     when "low_stock" then products.low_stock
     when "out_of_stock" then products.out_of_stock
     else products
@@ -181,6 +208,18 @@ class Admin::ProductsController < Admin::BaseController
     end
   end
 
+  def apply_price_filter products
+    if params[:min_price].present?
+      products = products.where("base_price >= ?",
+                                params[:min_price])
+    end
+    if params[:max_price].present?
+      products = products.where("base_price <= ?",
+                                params[:max_price])
+    end
+    products
+  end
+
   def apply_search_filter products
     return products if params[:search].blank?
 
@@ -192,8 +231,8 @@ class Admin::ProductsController < Admin::BaseController
     case params[:sort]
     when "name_asc" then products.order(:name)
     when "name_desc" then products.order(name: :desc)
-    when "price_asc" then products.order(:price)
-    when "price_desc" then products.order(price: :desc)
+    when "price_asc" then products.order(:base_price)
+    when "price_desc" then products.order(base_price: :desc)
     when "stock_asc" then products.order(:stock_quantity)
     when "stock_desc" then products.order(stock_quantity: :desc)
     when "created_asc" then products.order(:created_at)
